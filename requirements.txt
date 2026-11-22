@@ -3,3 +3,4 @@ matplotlib
 scipy
 emcee
 tqdm
+streamlit
