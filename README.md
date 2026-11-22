@@ -1,6 +1,5 @@
-# scientific-curve-fitting-mcmc
+
 Scientific parameter estimation using SciPy curve fitting, Bayesian inference and MCMC with emcee.
-# Scientific Curve Fitting and MCMC Parameter Estimation
 
 ## Overview
 
@@ -79,12 +78,10 @@ where \(\theta=(A,k,C)\) represents the model parameters and \(D\) represents th
 
 ```text
 scientific-curve-fitting-mcmc/
-│
 ├── ED.csv
-├── Project.py
+├── Sci_MCMC_Curve_fit.py
 ├── README.md
 └── requirements.txt
-```
 
 ## Installation
 
@@ -99,4 +96,4 @@ Make sure ED.csv is in the project directory.
 Run the program:
 
 ```bash
-python Project.py
+python Sci_MCMC_Curve_fit.py
