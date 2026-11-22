@@ -1,5 +1,6 @@
+# Scientific Curve Fitting and MCMC
 
-Scientific parameter estimation using SciPy curve fitting, Bayesian inference and MCMC with emcee.
+Scientific parameter estimation using SciPy curve fitting, Bayesian inference, and MCMC with emcee.
 
 ## Overview
 
@@ -73,6 +74,7 @@ where \(\theta=(A,k,C)\) represents the model parameters and \(D\) represents th
 - Matplotlib
 - SciPy
 - emcee
+- Streamlit
 
 ## Project Structure
 
@@ -80,8 +82,10 @@ where \(\theta=(A,k,C)\) represents the model parameters and \(D\) represents th
 scientific-curve-fitting-mcmc/
 ├── ED.csv
 ├── Sci_MCMC_Curve_fit.py
+├── app.py
 ├── README.md
 └── requirements.txt
+```
 
 ## Installation
 
@@ -89,11 +93,50 @@ Clone the repository:
 
 ```bash
 git clone https://github.com/usenseai/scientific-curve-fitting-mcmc.git
-## Running the Project
+```
 
-Make sure ED.csv is in the project directory.
+Navigate to the project directory:
 
-Run the program:
+```bash
+cd scientific-curve-fitting-mcmc
+```
+
+Install the required dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+## Running the Python Script
+
+Make sure `ED.csv` is in the project directory.
+
+Run the standalone analysis:
 
 ```bash
 python Sci_MCMC_Curve_fit.py
+```
+
+## Run the Streamlit Web App
+
+Launch the interactive web application:
+
+```bash
+streamlit run app.py
+```
+
+The application will open in your browser, allowing users to explore experimental data through exponential curve fitting and MCMC analysis.
+
+## Future Development
+
+- Support for additional mathematical models.
+- Interactive parameter estimation.
+- Improved MCMC convergence diagnostics.
+- Integration with more experimental datasets.
+- Applications to computational physics and scientific machine learning.
+
+## Author
+
+**UsenseAI**
+
+GitHub: https://github.com/usenseai
