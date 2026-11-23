@@ -1,142 +1,84 @@
+
 # Scientific Curve Fitting and MCMC
 
-Scientific parameter estimation using SciPy curve fitting, Bayesian inference, and MCMC with emcee.
-
-## Overview
-
-This project performs scientific parameter estimation using experimental data. It combines nonlinear curve fitting with Bayesian parameter estimation using Markov Chain Monte Carlo (MCMC).
-
-The current implementation uses an exponential decay model:
-
-\[
-y(t)=Ae^{-kt}+C
-\]
-
-where:
-
-- **A:** Amplitude of the exponential component.
-- **k:** Decay constant.
-- **C:** Baseline or background signal.
-- **t:** Time.
-
-The project compares parameter estimates obtained from two approaches:
-
-1. Nonlinear least-squares curve fitting using `scipy.optimize.curve_fit`.
-2. Bayesian parameter estimation using the `emcee` MCMC sampler.
+A Python-based interactive application for scientific data analysis using Streamlit, SciPy, NumPy, and emcee.
 
 ## Features
 
-- Load experimental data from CSV files.
-- Visualize experimental measurements.
-- Perform nonlinear curve fitting.
+- Upload experimental datasets in CSV format.
+- Select independent, dependent, and uncertainty columns.
+- Visualize experimental data with error bars.
+- Perform nonlinear and linear curve fitting.
 - Estimate parameter uncertainties using the covariance matrix.
-- Evaluate the fit using reduced chi-square.
+- Calculate chi-square and reduced chi-square.
 - Perform Bayesian parameter estimation using MCMC.
-- Apply prior constraints to model parameters.
-- Analyze posterior samples and parameter uncertainties.
-- Inspect MCMC trace plots.
-- Plot posterior distributions and compare them with curve-fitting estimates.
-- Estimate autocorrelation time to assess sampling efficiency.
+- Analyze MCMC chains using trace plots.
+- Visualize posterior parameter distributions.
+- Compare curve-fitting and MCMC estimates.
+- Download parameter estimation results.
 
-## Mathematical Model
+## Supported Mathematical Models
 
-The exponential decay model is:
+1. Exponential:
+   y = A exp(-kx) + C
 
-\[
-y(t)=Ae^{-kt}+C
-\]
+2. Linear:
+   y = mx + c
 
-The Gaussian log-likelihood used in the analysis is:
+3. Gaussian:
+   y = A exp(-(x-mu)^2/(2s^2)) + C
 
-\[
-\ln L=-\frac{1}{2}\sum_i
-\left(\frac{y_i-y_{\mathrm{model},i}}{\sigma_i}\right)^2
-\]
+4. Sinusoidal:
+   y = A sin(wx + phi) + C
 
-The current prior requires:
-
-\[
-k>0
-\]
-
-The posterior is proportional to:
-
-\[
-P(\theta|D)\propto L(D|\theta)P(\theta)
-\]
-
-where \(\theta=(A,k,C)\) represents the model parameters and \(D\) represents the experimental data.
-
-## Technologies and Libraries
+## Technologies Used
 
 - Python
 - NumPy
+- Pandas
 - Matplotlib
 - SciPy
 - emcee
 - Streamlit
 
-## Project Structure
-
-```text
-scientific-curve-fitting-mcmc/
-├── ED.csv
-├── Sci_MCMC_Curve_fit.py
-├── app.py
-├── README.md
-└── requirements.txt
-```
-
 ## Installation
 
 Clone the repository:
 
-```bash
-git clone https://github.com/usenseai/scientific-curve-fitting-mcmc.git
-```
+    git clone https://github.com/usenseai/scientific-curve-fitting-mcmc.git
 
-Navigate to the project directory:
+Move into the project directory:
 
-```bash
-cd scientific-curve-fitting-mcmc
-```
+    cd scientific-curve-fitting-mcmc
 
-Install the required dependencies:
+Install dependencies:
 
-```bash
-pip install -r requirements.txt
-```
+    pip install -r requirements.txt
 
-## Running the Python Script
+Run the application:
 
-Make sure `ED.csv` is in the project directory.
+    streamlit run Sci_MCMC_Curve_fit.py
 
-Run the standalone analysis:
+## Dataset Format
 
-```bash
-python Sci_MCMC_Curve_fit.py
-```
+Upload a CSV file containing at least three numeric columns:
 
-## Run the Streamlit Web App
+- Independent variable (x)
+- Dependent variable (y)
+- Measurement uncertainty (sigma)
 
-Launch the interactive web application:
+The uncertainty values must be positive.
 
-```bash
-streamlit run app.py
-```
+## Methodology
 
-The application will open in your browser, allowing users to explore experimental data through exponential curve fitting and MCMC analysis.
-
-## Future Development
-
-- Support for additional mathematical models.
-- Interactive parameter estimation.
-- Improved MCMC convergence diagnostics.
-- Integration with more experimental datasets.
-- Applications to computational physics and scientific machine learning.
+1. Experimental data loading and visualization.
+2. Mathematical model selection.
+3. Parameter estimation using SciPy curve_fit.
+4. Uncertainty estimation using the covariance matrix.
+5. Goodness-of-fit analysis using reduced chi-square.
+6. Bayesian parameter estimation using MCMC.
+7. Posterior distribution and convergence diagnostics.
 
 ## Author
 
-**UsenseAI**
-
-GitHub: https://github.com/usenseai
+UsenseAI
