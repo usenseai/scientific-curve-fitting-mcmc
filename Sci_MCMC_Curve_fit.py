@@ -775,6 +775,77 @@ for i, name in enumerate(names_mcmc):
     plt.close(fig)
 
 # --------------------------------------------------
+# 14A. FITTED CURVES FROM MCMC SAMPLES
+# --------------------------------------------------
+
+st.subheader("Fitted Curves from MCMC Samples")
+
+# Each MCMC sample is one set of model parameters, so it defines one curve.
+# Only the model parameters are used (the noise column, if present, is ignored).
+n_draw = min(300, len(samples_raw))
+draw_idx = rng.choice(len(samples_raw), size=n_draw, replace=False)
+
+with np.errstate(all="ignore"):
+    curves = np.array([model(x_plot, *samples_raw[i, :ndim]) for i in draw_idx])
+
+curves = curves[np.all(np.isfinite(curves), axis=1)]
+
+low95, low68, median_curve, high68, high95 = np.percentile(
+    curves, [2.5, 16, 50, 84, 97.5], axis=0
+)
+
+fig, ax = plt.subplots(figsize=(9, 5))
+
+ax.plot(x_plot, curves.T, color="gray", alpha=0.05, linewidth=1)
+
+ax.fill_between(x_plot, low95, high95, color="tab:blue", alpha=0.15,
+                label="95% credible band")
+ax.fill_between(x_plot, low68, high68, color="tab:blue", alpha=0.30,
+                label="68% credible band")
+
+ax.plot(x_plot, median_curve, color="tab:blue", linewidth=2,
+        label="MCMC median curve")
+ax.plot(x_plot, y_plot, "r--", linewidth=1.5, label="Curve fit")
+
+if noise_free:
+    ax.plot(x, y, "ko", markersize=3, label="Experimental Data")
+else:
+    ax.errorbar(x, y, yerr=sigma, fmt="ko", markersize=3,
+                label="Experimental Data")
+
+ax.set_xlabel(x_col)
+ax.set_ylabel(y_label)
+ax.set_title(f"{len(curves)} curves drawn from the MCMC posterior")
+ax.grid(True, alpha=0.3)
+ax.legend()
+
+st.pyplot(fig)
+plt.close(fig)
+
+st.caption(
+    "Gray lines: curves from randomly chosen MCMC samples. Shaded bands: central 68% "
+    "and 95% ranges of those curves at each x. They show the uncertainty of the fitted "
+    "curve, not the scatter of individual measurements."
+)
+
+band_table = pd.DataFrame({
+    "x": x_plot,
+    "median": median_curve,
+    "low_68": low68,
+    "high_68": high68,
+    "low_95": low95,
+    "high_95": high95,
+    "curve_fit": y_plot
+})
+
+st.download_button(
+    label="Download curve bands",
+    data=band_table.to_csv(index=False).encode("utf-8"),
+    file_name="mcmc_curve_bands.csv",
+    mime="text/csv"
+)
+
+# --------------------------------------------------
 # 15. DOWNLOAD RESULTS
 # --------------------------------------------------
 
