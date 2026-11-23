@@ -1,84 +1,69 @@
-
 # Scientific Curve Fitting and MCMC
 
-A Python-based interactive application for scientific data analysis using Streamlit, SciPy, NumPy, and emcee.
+A Streamlit app for fitting experimental data with a chosen model and estimating parameter uncertainties with Bayesian MCMC sampling (`emcee`).
 
 ## Features
 
-- Upload experimental datasets in CSV format.
-- Select independent, dependent, and uncertainty columns.
-- Visualize experimental data with error bars.
-- Perform nonlinear and linear curve fitting.
-- Estimate parameter uncertainties using the covariance matrix.
-- Calculate chi-square and reduced chi-square.
-- Perform Bayesian parameter estimation using MCMC.
-- Analyze MCMC chains using trace plots.
-- Visualize posterior parameter distributions.
-- Compare curve-fitting and MCMC estimates.
-- Download parameter estimation results.
-
-## Supported Mathematical Models
-
-1. Exponential:
-   y = A exp(-kx) + C
-
-2. Linear:
-   y = mx + c
-
-3. Gaussian:
-   y = A exp(-(x-mu)^2/(2s^2)) + C
-
-4. Sinusoidal:
-   y = A sin(wx + phi) + C
-
-## Technologies Used
-
-- Python
-- NumPy
-- Pandas
-- Matplotlib
-- SciPy
-- emcee
-- Streamlit
+- Upload a CSV dataset.
+- Three input modes: existing `y` and `sigma` columns, replicate columns, or replicate rows.
+- Automatic mean and standard error of the mean (SEM) from replicates.
+- Four models: exponential, linear, Gaussian and sinusoidal.
+- Weighted least-squares fit (`scipy.optimize.curve_fit`) with parameter uncertainties.
+- Goodness of fit: $\chi^2$ and reduced $\chi^2$.
+- MCMC sampling with trace plots, posterior histograms and an autocorrelation-time check.
+- Download of the processed data and of the fit and MCMC results as CSV.
 
 ## Installation
 
-Clone the repository:
+```bash
+git clone <your-repository-url>
+cd <your-repository-folder>
+pip install -r requirements.txt
+```
 
-    git clone https://github.com/usenseai/scientific-curve-fitting-mcmc.git
+`requirements.txt` should contain:
 
-Move into the project directory:
+```
+streamlit
+numpy
+pandas
+scipy
+matplotlib
+emcee
+```
 
-    cd scientific-curve-fitting-mcmc
+## Run
 
-Install dependencies:
+```bash
+streamlit run Sci_MCMC_Curve_fit.py
+```
 
-    pip install -r requirements.txt
+## Input modes
 
-Run the application:
+All columns used by the app must be numeric.
 
-    streamlit run Sci_MCMC_Curve_fit.py
+### 1. Existing columns (y and sigma)
 
-## Dataset Format
+Select one independent variable $x$, one dependent variable $y$ and one uncertainty column $\sigma$. Rows with non-finite values or $\sigma \le 0$ are removed.
 
-Upload a CSV file containing at least three numeric columns:
+### 2. Replicate columns (wide format)
 
-- Independent variable (x)
-- Dependent variable (y)
-- Measurement uncertainty (sigma)
+Each replicate is its own column, for example:
 
-The uncertainty values must be positive.
+| Time | Cg_1 | Cg_2 | Cg_3 | YPD_1 | YPD_2 | YPD_3 |
+|------|------|------|------|-------|-------|-------|
+| 0    | ...  | ...  | ...  | ...   | ...   | ...   |
 
-## Methodology
+Select the independent variable, then the replicate columns of one group. Groups such as `Cg` and `YPD` are suggested automatically from column names that differ only by a trailing number (`_1`, `_2`, `_3`). The suggestion can be edited, so any column names work.
 
-1. Experimental data loading and visualization.
-2. Mathematical model selection.
-3. Parameter estimation using SciPy curve_fit.
-4. Uncertainty estimation using the covariance matrix.
-5. Goodness-of-fit analysis using reduced chi-square.
-6. Bayesian parameter estimation using MCMC.
-7. Posterior distribution and convergence diagnostics.
+### 3. Replicate rows (long format)
 
-## Author
+Several rows share the same $x$ value. The app groups the rows by $x$ and averages the selected $y$ column.
 
-UsenseAI
+## Mean and uncertainty
+
+In both replicate modes, at each $x_i$ with $n_i$ valid replicates $R_{ik}$:
+
+$$\bar{y}_i = \frac{1}{n_i}\sum_{k=1}^{n_i} R_{ik}$$
+
+$$s_i = \sqrt{\frac{1}{n_i-1}\sum_{k=1}^{n_i}\left(R_{ik}-\bar{y}_i\right)^2}$$
