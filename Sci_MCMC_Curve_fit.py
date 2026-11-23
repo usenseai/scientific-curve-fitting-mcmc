@@ -1,4 +1,4 @@
-
+from replicates import suggest_groups, replicate_table, long_table
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy
