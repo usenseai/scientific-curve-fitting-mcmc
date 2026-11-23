@@ -1,170 +1,539 @@
+
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy
 import emcee
 import streamlit as st
+import pandas as pd
+
+# --------------------------------------------------
+# 1. STREAMLIT APPLICATION
+# --------------------------------------------------
+
+st.set_page_config(page_title="Scientific Curve Fitting and MCMC",
+                   layout="wide")
+
 st.title("Scientific Curve Fitting and MCMC")
-st.write("Exponential model: y = A exp(-kt) + C")
-ED=np.loadtxt("ED.csv",delimiter=",", skiprows=1, unpack=True)
-t,y,sigma=ED
-#print(ED)
-#ploting the real dataset
-plt.figure("Real Dataset Plot")
-plt.plot(t,y,"ro", markersize=1, label="Experimental Data")
-plt.ylabel("y")
-plt.xlabel("Time")
-plt.axhline(y=0,linewidth=1,color="b")
-plt.axvline(x=0,linewidth=1,color="b")
-plt.grid(True,alpha=0.3)
+st.write("Upload experimental data, select a mathematical model, and perform curve fitting and Bayesian MCMC analysis.")
+
+# --------------------------------------------------
+# 2. DATASET UPLOAD
+# --------------------------------------------------
+
+uploaded_file = st.file_uploader(
+    "Upload your CSV dataset",
+    type=["csv"]
+)
+
+if uploaded_file is None:
+    st.info("Please upload a CSV file to begin.")
+    st.stop()
+
+df = pd.read_csv(uploaded_file)
+
+st.subheader("Dataset Preview")
+st.dataframe(df)
+
+# Select numeric columns only
+numeric_columns = df.select_dtypes(include=np.number).columns.tolist()
+
+if len(numeric_columns) < 3:
+    st.error("Your dataset must contain at least three numeric columns: x, y and uncertainty.")
+    st.stop()
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    x_col = st.selectbox("Independent variable (x)", numeric_columns)
+
+with col2:
+    y_col = st.selectbox("Dependent variable (y)", numeric_columns)
+
+with col3:
+    sigma_col = st.selectbox("Uncertainty (sigma)", numeric_columns)
+
+if len({x_col, y_col, sigma_col}) != 3:
+    st.error("Please select three different columns.")
+    st.stop()
+
+x = df[x_col].to_numpy(dtype=float)
+y = df[y_col].to_numpy(dtype=float)
+sigma = df[sigma_col].to_numpy(dtype=float)
+
+# Remove invalid rows
+valid = (
+    np.isfinite(x) &
+    np.isfinite(y) &
+    np.isfinite(sigma) &
+    (sigma > 0)
+)
+
+x = x[valid]
+y = y[valid]
+sigma = sigma[valid]
+
+if len(x) == 0:
+    st.error("No valid data points found. Check your dataset and uncertainties.")
+    st.stop()
+
+if np.ptp(x) == 0:
+    st.error("The independent variable must contain more than one distinct value.")
+    st.stop()
+
+st.write(f"Number of valid data points: {len(x)}")
+
+# --------------------------------------------------
+# 3. MATHEMATICAL MODELS
+# --------------------------------------------------
+
+def exponential(x, A, k, C):
+    return A * np.exp(-k * x) + C
+
+
+def linear(x, m, c):
+    return m * x + c
+
+
+def gaussian(x, A, mu, s, C):
+    return A * np.exp(-(x - mu)**2 / (2 * s**2)) + C
+
+
+def sinusoidal(x, A, w, phi, C):
+    return A * np.sin(w * x + phi) + C
+
+
+models = {
+    "Exponential": exponential,
+    "Linear": linear,
+    "Gaussian": gaussian,
+    "Sinusoidal": sinusoidal
+}
+
+model_name = st.selectbox(
+    "Select mathematical model",
+    list(models.keys())
+)
+
+model = models[model_name]
+
+# Parameter names and initial guesses
+x_range = np.ptp(x)
+y_range = np.ptp(y)
+y_min = np.min(y)
+y_max = np.max(y)
+y_mean = np.mean(y)
+
+if model_name == "Exponential":
+
+    parameter_names = ["A", "k", "C"]
+
+    p0 = [
+        y[0] - y[-1],
+        1 / x_range,
+        y[-1]
+    ]
+
+    lower_bounds = [-np.inf, 1e-10, -np.inf]
+    upper_bounds = [np.inf, np.inf, np.inf]
+
+    constrained_index = 1
+
+elif model_name == "Linear":
+
+    parameter_names = ["m", "c"]
+
+    p0 = np.polyfit(x, y, 1)
+
+    lower_bounds = [-np.inf, -np.inf]
+    upper_bounds = [np.inf, np.inf]
+
+    constrained_index = None
+
+elif model_name == "Gaussian":
+
+    parameter_names = ["A", "mu", "s", "C"]
+
+    p0 = [
+        y_max - y_min,
+        x[np.argmax(y)],
+        x_range / 6,
+        y_min
+    ]
+
+    lower_bounds = [-np.inf, -np.inf, 1e-10, -np.inf]
+    upper_bounds = [np.inf, np.inf, np.inf, np.inf]
+
+    constrained_index = 2
+
+elif model_name == "Sinusoidal":
+
+    parameter_names = ["A", "w", "phi", "C"]
+
+    p0 = [
+        y_range / 2,
+        2 * np.pi / x_range,
+        0,
+        y_mean
+    ]
+
+    lower_bounds = [-np.inf, 1e-10, -np.inf, -np.inf]
+    upper_bounds = [np.inf, np.inf, np.inf, np.inf]
+
+    constrained_index = 1
+
+ndim = len(parameter_names)
+
+if len(x) <= ndim:
+    st.error("You need more data points than model parameters.")
+    st.stop()
+
+# --------------------------------------------------
+# 4. EXPERIMENTAL DATA PLOT
+# --------------------------------------------------
+
+st.subheader("Experimental Dataset")
+
+plt.figure(figsize=(9, 5))
+
+plt.errorbar(
+    x, y,
+    yerr=sigma,
+    fmt="ro",
+    markersize=3,
+    label="Experimental Data"
+)
+
+plt.xlabel(x_col)
+plt.ylabel(y_col)
+plt.grid(True, alpha=0.3)
 plt.legend()
+
 st.pyplot(plt.gcf())
 plt.close()
-#Curve Fitting by scipy.optimize.curve_fit
-# Model: y=A*exp(-k*t)+C
-# A is the amplitude, k is the decay constant, and C is the baseline.
-# Initial value at t=0 is A+C.
-def model(t,A,k,C):
-    return A*np.exp(-k*t)+C
-popt,pcov=scipy.optimize.curve_fit(model,t,y,sigma=sigma, absolute_sigma=True)
-#Fitted values come from popt
-A_f,k_f,C_f=popt
-#gives diagonal elements telling parameters error estimation
-ecov=np.sqrt(np.diag(pcov))
-st.subheader("Curve Fitting Results")
-st.write(f"A = {A_f:.5f}")
-st.write(f"k = {k_f:.5f}")
-st.write(f"C = {C_f:.5f}")
-st.write(f"Parameter uncertainties = {ecov}")
-#values  of y as per fitted parameters of model
-y_f=model(t,A_f,k_f,C_f)
-#ploting the fitting vs the errorbar
-plt.figure("Fitted Curve", figsize=(10,6)) #Wider and taler fig
-plt.errorbar(t,y,yerr=sigma,fmt="c+", markersize=3, label="Experimental Data")
-plt.plot(t,y_f,"b-",linewidth=1,label="Data Fit")
-plt.ylabel("y")
-plt.xlabel("Time")
-plt.axhline(y=0,linewidth=1,color="b")
-plt.axvline(x=0,linewidth=1,color="b")
-plt.grid(True,alpha=0.3)
+
+# --------------------------------------------------
+# 5. CURVE FITTING
+# --------------------------------------------------
+
+st.subheader("Curve Fitting")
+
+try:
+
+    popt, pcov = scipy.optimize.curve_fit(
+        model,
+        x,
+        y,
+        p0=p0,
+        sigma=sigma,
+        absolute_sigma=True,
+        bounds=(lower_bounds, upper_bounds),
+        maxfev=20000
+    )
+
+except (RuntimeError, ValueError) as error:
+
+    st.error(f"Curve fitting failed: {error}")
+    st.stop()
+
+ecov = np.sqrt(np.maximum(np.diag(pcov), 0))
+
+y_fit = model(x, *popt)
+
+# Display fitting results
+results = pd.DataFrame({
+    "Parameter": parameter_names,
+    "Best Fit": popt,
+    "Uncertainty": ecov
+})
+
+st.dataframe(results, hide_index=True)
+
+# --------------------------------------------------
+# 6. FITTED CURVE PLOT
+# --------------------------------------------------
+
+x_plot = np.linspace(np.min(x), np.max(x), 500)
+y_plot = model(x_plot, *popt)
+
+plt.figure(figsize=(9, 5))
+
+plt.errorbar(
+    x, y,
+    yerr=sigma,
+    fmt="c+",
+    markersize=4,
+    label="Experimental Data"
+)
+
+plt.plot(
+    x_plot,
+    y_plot,
+    "b-",
+    linewidth=2,
+    label="Best Fit"
+)
+
+plt.xlabel(x_col)
+plt.ylabel(y_col)
+plt.grid(True, alpha=0.3)
 plt.legend()
+
 st.pyplot(plt.gcf())
 plt.close()
-#Checking the fit is how much correct by reduced chi_sqaure method which has formula first for chi square and then for reduced
-chi_sq=np.sum(((y-y_f)/sigma)**2)
-N=len(y)
-p=3
-red_chi_sq=chi_sq/(N-p)
-st.write(f"Reduced Chi Square = {red_chi_sq:.5f}")
-# Near 1: residuals are reasonably consistent with assumed uncertainties.
-# Much greater than 1: residuals are larger than expected.
-# Much less than 1: uncertainties may be overestimated.
-# MCMC stated here with emcee library
-# we have to make three log functions, 1. log_likelihood, 2. log_prior, 3. log_posterior
-def log_likelihood(theta, t,y,sigma):
-    A,k,C=theta
-    y_m=model(t,A,k,C)
-    return -0.5*np.sum(((y-y_m)/sigma)**2) # same formula as of guassian but with log and ingnoring the lnsqrt(2pi)*sigma terms because it will not affect our likelihood
-def log_prior(theta): #only theta as we need to check theta the parameters A ,k, C
-    A,k,C=theta
-    if k>0:
-        return 0.0
-    else:
+
+# --------------------------------------------------
+# 7. REDUCED CHI-SQUARE
+# --------------------------------------------------
+
+chi_sq = np.sum(((y - y_fit) / sigma)**2)
+
+N = len(y)
+p = ndim
+
+red_chi_sq = chi_sq / (N - p)
+
+st.subheader("Goodness of Fit")
+
+st.write(f"Chi-square = {chi_sq:.5f}")
+st.write(f"Reduced Chi-square = {red_chi_sq:.5f}")
+
+# --------------------------------------------------
+# 8. MCMC FUNCTIONS
+# --------------------------------------------------
+
+def log_likelihood(theta, x, y, sigma, model):
+
+    y_model = model(x, *theta)
+
+    return -0.5 * np.sum(((y - y_model) / sigma)**2)
+
+
+def log_prior(theta, model_name):
+
+    if not np.all(np.isfinite(theta)):
         return -np.inf
-def log_posterior(theta,t,y,sigma):
-    lp=log_prior(theta)
+
+    if model_name == "Exponential":
+
+        if theta[1] <= 0:
+            return -np.inf
+
+    elif model_name == "Gaussian":
+
+        if theta[2] <= 0:
+            return -np.inf
+
+    elif model_name == "Sinusoidal":
+
+        if theta[1] <= 0:
+            return -np.inf
+
+    return 0.0
+
+
+def log_posterior(theta, x, y, sigma, model, model_name):
+
+    lp = log_prior(theta, model_name)
+
     if not np.isfinite(lp):
         return -np.inf
-    else:
-        return log_likelihood(theta,t,y,sigma)+lp
-# Now running walkers
-ndim=3
-nwalkers=32 #usually twice as the dimensions are taken but taking 32 will provide large ensemble of walkers
-#initializing the positions
-pos=popt+0.01*ecov*np.random.randn(nwalkers,ndim) # the position is sum of our popt we have found in curve_fit, ecov are the uncertainties we found for parameter
-#0.01 is 1% of the uncertainties used and np.random.randn will generate an array of 32 rows and 3 columns to have our 32 walkers
-while not np.all(pos[:,1]>0):
-    pos = popt + 0.01 * ecov * np.random.randn(nwalkers, ndim)
-#we will use emcee.EnsembleSampler class to construct an object called sampler to perform different operations on it
-sampler=emcee.EnsembleSampler(nwalkers, ndim, log_posterior,args= (t,y,sigma))
-# we used log_posterior to evaluate the posterior and args are the experimental data
-#Running MCMC chain
-nsteps=5000
-sampler.run_mcmc(pos,nsteps,progress=True)
-# Burning in the intial samples becaue they may influence by their starting position
-burnin=1000
-samples=sampler.get_chain(discard=burnin, flat=True) # method .get_chain will call in the recorded positions and Flattening to get (samples,3) means no. of samples having parameters 3 a 2D array
-#Analyzing the samples
+
+    return lp + log_likelihood(theta, x, y, sigma, model)
+
+
+# --------------------------------------------------
+# 9. INITIALIZE MCMC WALKERS
+# --------------------------------------------------
+
+st.subheader("MCMC Sampling")
+
+nwalkers = max(32, 2 * ndim + 2)
+nsteps = 5000
+burnin = 1000
+
+rng = np.random.default_rng(42)
+
+# Use covariance uncertainties to initialize walkers
+scale = np.where(
+    np.isfinite(ecov) & (ecov > 0),
+    ecov,
+    np.maximum(np.abs(popt) * 1e-4, 1e-6)
+)
+
+pos = popt + 0.1 * scale * rng.standard_normal((nwalkers, ndim))
+
+# Ensure all walkers satisfy the prior
+if constrained_index is not None:
+
+    attempts = 0
+
+    while np.any(pos[:, constrained_index] <= 0) and attempts < 1000:
+
+        invalid = pos[:, constrained_index] <= 0
+
+        pos[invalid] = (
+            popt +
+            0.1 * scale * rng.standard_normal((np.sum(invalid), ndim))
+        )
+
+        attempts += 1
+
+    if np.any(pos[:, constrained_index] <= 0):
+        st.error("Could not initialize valid MCMC walkers. Check your data and model.")
+        st.stop()
+
+# --------------------------------------------------
+# 10. RUN MCMC
+# --------------------------------------------------
+
+sampler = emcee.EnsembleSampler(
+    nwalkers,
+    ndim,
+    log_posterior,
+    args=(x, y, sigma, model, model_name)
+)
+
+with st.spinner("Running MCMC sampling..."):
+
+    sampler.run_mcmc(
+        pos,
+        nsteps,
+        progress=False
+    )
+
+st.success("MCMC sampling completed.")
+
+# --------------------------------------------------
+# 11. ANALYZE MCMC SAMPLES
+# --------------------------------------------------
+
+samples = sampler.get_chain(
+    discard=burnin,
+    flat=True
+)
+
 average = np.mean(samples, axis=0)
 uncertainty = np.std(samples, axis=0)
 
+mcmc_results = pd.DataFrame({
+    "Parameter": parameter_names,
+    "Curve Fit": popt,
+    "MCMC Mean": average,
+    "MCMC Uncertainty": uncertainty
+})
+
 st.subheader("MCMC Results")
+st.dataframe(mcmc_results, hide_index=True)
 
-st.write(f"Curve Fit A = {A_f:.5f} | MCMC A = {average[0]:.5f}")
-st.write(f"Curve Fit k = {k_f:.5f} | MCMC k = {average[1]:.5f}")
-st.write(f"Curve Fit C = {C_f:.5f} | MCMC C = {average[2]:.5f}")
+# --------------------------------------------------
+# 12. AUTOCORRELATION TIME
+# --------------------------------------------------
 
-st.write(f"MCMC uncertainties (A, k, C): {uncertainty}")
-tau=sampler.get_autocorr_time(discard=burnin)
-# Autocorrelation time estimates how many steps are needed for samples
-# to become approximately independent.
-if nsteps-burnin > 50*np.max(tau):
-    st.success("Your chain length is fine as per 50τ rule of thumb")
-else:
-    st.warning("Your chain length is short")
-chain=sampler.get_chain()
-# Plotting A, k, C to inspect chain behaviour and mixing.
-# Trace plots alone cannot prove convergence.
-plt.figure(figsize=(10,6))
+try:
 
-plt.subplot(3,1,1)
-plt.plot(chain[:,:,0],alpha=0.3)
-plt.ylabel("A")
-plt.subplot(3,1,2)
-plt.plot(chain[:,:,1],alpha=0.3)
-plt.ylabel("k")
-plt.subplot(3,1,3)
-plt.plot(chain[:,:,2],alpha=0.3)
-plt.ylabel("C")
-plt.tight_layout() # auto adjusting the spaces between plots, labels and axis
-st.pyplot(plt.gcf())
-plt.close()
-# Plotting posterior histograms to examine the distributions of A, k and C.
+    tau = sampler.get_autocorr_time(discard=burnin)
 
-# Posterior distribution of A, comparing curve-fit and MCMC estimates.
-plt.figure(figsize=(8,8))
-plt.hist(samples[:,0], bins=40, density=True)
-plt.axvline(A_f, color="r",linestyle="--", label="Curve Fit")
-plt.axvline(average[0], color="b",linestyle="--",label="MCMC Fit")
-plt.ylabel("Probability Density")
-plt.xlabel("A")
-plt.title("Posterior Distribution of A and Comparison of Curve and MCMC Fit")
-plt.legend()
+    if nsteps - burnin > 50 * np.max(tau):
+
+        st.success("Chain length is sufficient according to the 50τ rule of thumb.")
+
+    else:
+
+        st.warning("Chain length may be insufficient according to the 50τ rule of thumb.")
+
+    st.write("Autocorrelation times:", tau)
+
+except emcee.autocorr.AutocorrError:
+
+    st.warning("Chain is too short to estimate autocorrelation time reliably.")
+
+# --------------------------------------------------
+# 13. TRACE PLOTS
+# --------------------------------------------------
+
+st.subheader("MCMC Trace Plots")
+
+chain = sampler.get_chain()
+
+fig, axes = plt.subplots(
+    ndim,
+    1,
+    figsize=(10, 2.5 * ndim),
+    sharex=True
+)
+
+if ndim == 1:
+    axes = [axes]
+
+for i in range(ndim):
+
+    axes[i].plot(
+        chain[:, :, i],
+        alpha=0.3
+    )
+
+    axes[i].set_ylabel(parameter_names[i])
+
+axes[-1].set_xlabel("MCMC Step")
+
 plt.tight_layout()
-st.pyplot(plt.gcf())
-plt.close()
 
-# Posterior distribution of k, comparing curve-fit and MCMC estimates.
-plt.figure(figsize=(8,8))
-plt.hist(samples[:,1], bins=40, density=True)
-plt.axvline(k_f, color="r",linestyle="--", label="Curve Fit")
-plt.axvline(average[1], color="b",linestyle="--",label="MCMC Fit")
-plt.ylabel("Probability Density")
-plt.xlabel("k")
-plt.title("Posterior Distribution of k and Comparison of Curve and MCMC Fit")
-plt.legend()
-plt.tight_layout()
-st.pyplot(plt.gcf())
-plt.close()
+st.pyplot(fig)
+plt.close(fig)
 
-# Posterior distribution of C, comparing curve-fit and MCMC estimates.
-plt.figure(figsize=(8,8))
-plt.hist(samples[:,2], bins=40, density=True)
-plt.axvline(C_f, color="r",linestyle="--", label="Curve Fit")
-plt.axvline(average[2], color="b",linestyle="--",label="MCMC Fit")
-plt.ylabel("Probability Density")
-plt.xlabel("C")
-plt.title("Posterior Distribution of C and Comparison of Curve and MCMC Fit")
-plt.legend()
-plt.tight_layout()
-st.pyplot(plt.gcf())
-plt.close()
+# --------------------------------------------------
+# 14. POSTERIOR DISTRIBUTIONS
+# --------------------------------------------------
+
+st.subheader("Posterior Distributions")
+
+for i, name in enumerate(parameter_names):
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+
+    ax.hist(
+        samples[:, i],
+        bins=40,
+        density=True,
+        alpha=0.7
+    )
+
+    ax.axvline(
+        popt[i],
+        color="red",
+        linestyle="--",
+        label="Curve Fit"
+    )
+
+    ax.axvline(
+        average[i],
+        color="blue",
+        linestyle="--",
+        label="MCMC Mean"
+    )
+
+    ax.set_xlabel(name)
+    ax.set_ylabel("Probability Density")
+    ax.set_title(f"Posterior Distribution of {name}")
+    ax.legend()
+    ax.grid(True, alpha=0.2)
+
+    st.pyplot(fig)
+    plt.close(fig)
+
+# --------------------------------------------------
+# 15. DOWNLOAD RESULTS
+# --------------------------------------------------
+
+st.subheader("Download Results")
+
+csv_results = mcmc_results.to_csv(index=False).encode("utf-8")
+
+st.download_button(
+    label="Download Parameter Results",
+    data=csv_results,
+    file_name="curve_fitting_mcmc_results.csv",
+    mime="text/csv"
+)
+
+st.success("Scientific curve fitting and MCMC analysis completed.")
