@@ -1,6 +1,6 @@
 numpy
+pandas
 matplotlib
 scipy
 emcee
-tqdm
 streamlit
