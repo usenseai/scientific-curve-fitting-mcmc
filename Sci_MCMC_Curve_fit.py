@@ -1,10 +1,10 @@
-from replicates import suggest_groups, replicate_table, long_table
+import re
 import numpy as np
 import matplotlib.pyplot as plt
-import scipy
 import emcee
 import streamlit as st
 import pandas as pd
+from scipy.optimize import curve_fit
 
 # --------------------------------------------------
 # 1. STREAMLIT APPLICATION
@@ -15,6 +15,68 @@ st.set_page_config(page_title="Scientific Curve Fitting and MCMC",
 
 st.title("Scientific Curve Fitting and MCMC")
 st.write("Upload experimental data, select a mathematical model, and perform curve fitting and Bayesian MCMC analysis.")
+
+
+# --------------------------------------------------
+# 1A. REPLICATE HELPERS (mean and SEM)
+# --------------------------------------------------
+
+def suggest_groups(columns, exclude=()):
+    """Group column names that differ only by a trailing replicate index.
+    Example: Cg_1, Cg_2, Cg_3 -> {'Cg': ['Cg_1', 'Cg_2', 'Cg_3']}."""
+    pattern = re.compile(r"^(.*?)[\s_\-\.]*(?:rep|r)?[\s_\-\.]*\d+$", re.IGNORECASE)
+    groups = {}
+    for c in columns:
+        if c in exclude:
+            continue
+        m = pattern.match(str(c))
+        if m and m.group(1):
+            groups.setdefault(m.group(1), []).append(c)
+    return {g: cols for g, cols in groups.items() if len(cols) >= 2}
+
+
+def _apply_policy(out, policy, sigma_floor):
+    """Handle sigma == 0 or undefined (fewer than 2 replicates)."""
+    bad = ~(out["sigma"] > 0)
+    n_bad = int(bad.sum())
+    if n_bad:
+        if policy == "drop":
+            out = out[~bad]
+        elif policy == "floor":
+            if sigma_floor is None or sigma_floor <= 0:
+                raise ValueError("Provide a positive sigma floor.")
+            out = out.copy()
+            out.loc[bad, "sigma"] = sigma_floor
+        else:
+            raise ValueError("policy must be 'drop' or 'floor'")
+    return out.reset_index(drop=True), n_bad
+
+
+def replicate_table(df, x_col, rep_cols, policy="drop", sigma_floor=None):
+    """Wide format: mean and SEM across replicate columns at each x."""
+    reps = df[rep_cols].apply(pd.to_numeric, errors="coerce")
+    out = pd.DataFrame({
+        "x": pd.to_numeric(df[x_col], errors="coerce"),
+        "y": reps.mean(axis=1),
+        "n": reps.count(axis=1),
+    })
+    out["sigma"] = reps.std(axis=1, ddof=1) / np.sqrt(out["n"])
+    out = out.dropna(subset=["x", "y"])
+    return _apply_policy(out, policy, sigma_floor)
+
+
+def long_table(df, x_col, y_col, policy="drop", sigma_floor=None):
+    """Long format: several rows share the same x value."""
+    d = df[[x_col, y_col]].apply(pd.to_numeric, errors="coerce").dropna()
+    g = d.groupby(x_col)[y_col]
+    out = pd.DataFrame({
+        "x": g.mean().index.to_numpy(),
+        "y": g.mean().to_numpy(),
+        "n": g.count().to_numpy(),
+    })
+    out["sigma"] = g.std(ddof=1).to_numpy() / np.sqrt(out["n"])
+    return _apply_policy(out, policy, sigma_floor)
+
 
 # --------------------------------------------------
 # 2. DATASET UPLOAD
@@ -38,27 +100,114 @@ st.dataframe(df)
 numeric_columns = df.select_dtypes(include=np.number).columns.tolist()
 
 if len(numeric_columns) < 3:
-    st.error("Your dataset must contain at least three numeric columns: x, y and uncertainty.")
+    st.error("Your dataset must contain at least three numeric columns.")
     st.stop()
 
-col1, col2, col3 = st.columns(3)
+# --------------------------------------------------
+# 2A. INPUT MODE AND COLUMN SELECTION
+# --------------------------------------------------
 
-with col1:
+st.subheader("Input Mode")
+
+mode = st.radio(
+    "How is the uncertainty provided?",
+    ["Existing columns (y and sigma)",
+     "Replicate columns (wide: one column per replicate)",
+     "Replicate rows (long: repeated x values)"]
+)
+
+processed = None   # table of x, y, sigma (and n) in replicate modes
+
+if mode == "Existing columns (y and sigma)":
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        x_col = st.selectbox("Independent variable (x)", numeric_columns)
+
+    with col2:
+        y_col = st.selectbox("Dependent variable (y)", numeric_columns)
+
+    with col3:
+        sigma_col = st.selectbox("Uncertainty (sigma)", numeric_columns)
+
+    if len({x_col, y_col, sigma_col}) != 3:
+        st.error("Please select three different columns.")
+        st.stop()
+
+    x = df[x_col].to_numpy(dtype=float)
+    y = df[y_col].to_numpy(dtype=float)
+    sigma = df[sigma_col].to_numpy(dtype=float)
+    y_label = y_col
+
+else:
+
     x_col = st.selectbox("Independent variable (x)", numeric_columns)
 
-with col2:
-    y_col = st.selectbox("Dependent variable (y)", numeric_columns)
+    policy = st.radio(
+        "Zero or undefined uncertainty (identical replicates, or fewer than 2 values)",
+        ["drop", "floor"],
+        help="drop: remove those points. floor: replace sigma by the value below."
+    )
 
-with col3:
-    sigma_col = st.selectbox("Uncertainty (sigma)", numeric_columns)
+    floor = None
+    if policy == "floor":
+        floor = st.number_input(
+            "sigma floor (for example the instrument resolution)",
+            min_value=0.0, value=0.0, format="%.6g"
+        )
 
-if len({x_col, y_col, sigma_col}) != 3:
-    st.error("Please select three different columns.")
-    st.stop()
+    try:
+        if mode.startswith("Replicate columns"):
 
-x = df[x_col].to_numpy(dtype=float)
-y = df[y_col].to_numpy(dtype=float)
-sigma = df[sigma_col].to_numpy(dtype=float)
+            groups = suggest_groups(numeric_columns, exclude=[x_col])
+            choice = st.selectbox("Suggested replicate group",
+                                  ["(manual)"] + list(groups))
+
+            rep_cols = st.multiselect(
+                "Replicate columns",
+                [c for c in numeric_columns if c != x_col],
+                default=groups.get(choice, []),
+                key=f"rep_{choice}"
+            )
+
+            if len(rep_cols) < 2:
+                st.info("Select at least two replicate columns.")
+                st.stop()
+
+            processed, n_bad = replicate_table(df, x_col, rep_cols, policy, floor)
+            y_label = ("Mean of " + choice) if choice != "(manual)" else "Mean of selected replicates"
+
+        else:
+
+            y_col_long = st.selectbox(
+                "Dependent variable (y)",
+                [c for c in numeric_columns if c != x_col]
+            )
+
+            processed, n_bad = long_table(df, x_col, y_col_long, policy, floor)
+            y_label = "Mean of " + y_col_long
+
+    except ValueError as error:
+        st.error(str(error))
+        st.stop()
+
+    if n_bad:
+        st.warning(f"{n_bad} point(s) had zero or undefined SEM; policy '{policy}' was applied.")
+
+    st.write("Processed data (mean and standard error of the mean):")
+    st.dataframe(processed)
+
+    st.download_button(
+        label="Download processed data",
+        data=processed.to_csv(index=False).encode("utf-8"),
+        file_name="processed_data.csv",
+        mime="text/csv"
+    )
+
+    x = processed["x"].to_numpy(dtype=float)
+    y = processed["y"].to_numpy(dtype=float)
+    sigma = processed["sigma"].to_numpy(dtype=float)
 
 # Remove invalid rows
 valid = (
@@ -75,6 +224,12 @@ sigma = sigma[valid]
 if len(x) == 0:
     st.error("No valid data points found. Check your dataset and uncertainties.")
     st.stop()
+
+# Sort by x
+order = np.argsort(x)
+x = x[order]
+y = y[order]
+sigma = sigma[order]
 
 if np.ptp(x) == 0:
     st.error("The independent variable must contain more than one distinct value.")
@@ -204,7 +359,7 @@ plt.errorbar(
 )
 
 plt.xlabel(x_col)
-plt.ylabel(y_col)
+plt.ylabel(y_label)
 plt.grid(True, alpha=0.3)
 plt.legend()
 
@@ -219,7 +374,7 @@ st.subheader("Curve Fitting")
 
 try:
 
-    popt, pcov = scipy.optimize.curve_fit(
+    popt, pcov = curve_fit(
         model,
         x,
         y,
@@ -274,7 +429,7 @@ plt.plot(
 )
 
 plt.xlabel(x_col)
-plt.ylabel(y_col)
+plt.ylabel(y_label)
 plt.grid(True, alpha=0.3)
 plt.legend()
 
