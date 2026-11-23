@@ -12,7 +12,8 @@ A Streamlit app for fitting experimental data with a chosen model and estimating
 - Least-squares fit (`scipy.optimize.curve_fit`) with parameter uncertainties.
 - Goodness of fit: $\chi^2$ and reduced $\chi^2$ (with uncertainties), or residual standard deviation and $R^2$ (without).
 - MCMC sampling with trace plots, posterior histograms and an autocorrelation-time check.
-- Download of the processed data and of the fit and MCMC results as CSV.
+- Posterior curve plot: curves from random MCMC samples with 68% and 95% credible bands.
+- Download of the processed data, the fit and MCMC results, and the curve bands as CSV.
 
 ## Installation
 
@@ -130,11 +131,4 @@ MCMC: Gaussian likelihood with a flat prior inside the allowed parameter region,
 
 $$\ln \mathcal{L}(\boldsymbol{\theta}) = -\frac{1}{2}\sum_{i=1}^{N}\left(\frac{y_i - f(x_i;\boldsymbol{\theta})}{\sigma_i}\right)^2 + \text{const.}$$
 
-Sampling uses the affine-invariant ensemble sampler of `emcee` with at least 32 walkers, 5000 steps and 1000 burn-in steps. Chain length is checked against the rule of thumb of 50 integrated autocorrelation times.
-
-## Output
-
-- Table of fitted parameters with uncertainties.
-- Plots of the data and of the fitted curve.
-- $\chi^2$ and reduced $\chi^2$, or $\mathrm{RSS}$, $\hat{\sigma}$ and $R^2$ when no uncertainties are given.
-- MCMC table (mean and standard deviation of each parameter, including `sigma
+Sampling uses the affine-invariant ensemble sampler of `emcee` with at least 32 walkers,
