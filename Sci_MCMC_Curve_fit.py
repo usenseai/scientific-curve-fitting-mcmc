@@ -99,8 +99,8 @@ st.dataframe(df)
 # Select numeric columns only
 numeric_columns = df.select_dtypes(include=np.number).columns.tolist()
 
-if len(numeric_columns) < 3:
-    st.error("Your dataset must contain at least three numeric columns.")
+if len(numeric_columns) < 2:
+    st.error("Your dataset must contain at least two numeric columns (x and y).")
     st.stop()
 
 # --------------------------------------------------
@@ -109,16 +109,16 @@ if len(numeric_columns) < 3:
 
 st.subheader("Input Mode")
 
+NO_SIGMA = "None (estimate from data)"
+
 mode = st.radio(
     "How is the uncertainty provided?",
-    ["Existing columns (y and sigma)",
+    ["Existing columns (y and optional sigma)",
      "Replicate columns (wide: one column per replicate)",
      "Replicate rows (long: repeated x values)"]
 )
 
-processed = None   # table of x, y, sigma (and n) in replicate modes
-
-if mode == "Existing columns (y and sigma)":
+if mode.startswith("Existing columns"):
 
     col1, col2, col3 = st.columns(3)
 
@@ -129,15 +129,24 @@ if mode == "Existing columns (y and sigma)":
         y_col = st.selectbox("Dependent variable (y)", numeric_columns)
 
     with col3:
-        sigma_col = st.selectbox("Uncertainty (sigma)", numeric_columns)
+        sigma_col = st.selectbox(
+            "Uncertainty (sigma), optional",
+            [NO_SIGMA] + numeric_columns,
+            help="Choose 'None' if you have no uncertainties. The noise level is then "
+                 "estimated from the scatter of the data around the fit."
+        )
 
-    if len({x_col, y_col, sigma_col}) != 3:
-        st.error("Please select three different columns.")
+    use_sigma = sigma_col != NO_SIGMA
+
+    chosen = {x_col, y_col} | ({sigma_col} if use_sigma else set())
+
+    if len(chosen) != (3 if use_sigma else 2):
+        st.error("Please select different columns for each role.")
         st.stop()
 
     x = df[x_col].to_numpy(dtype=float)
     y = df[y_col].to_numpy(dtype=float)
-    sigma = df[sigma_col].to_numpy(dtype=float)
+    sigma = df[sigma_col].to_numpy(dtype=float) if use_sigma else None
     y_label = y_col
 
 else:
@@ -210,16 +219,16 @@ else:
     sigma = processed["sigma"].to_numpy(dtype=float)
 
 # Remove invalid rows
-valid = (
-    np.isfinite(x) &
-    np.isfinite(y) &
-    np.isfinite(sigma) &
-    (sigma > 0)
-)
+valid = np.isfinite(x) & np.isfinite(y)
+
+if sigma is not None:
+    valid &= np.isfinite(sigma) & (sigma > 0)
 
 x = x[valid]
 y = y[valid]
-sigma = sigma[valid]
+
+if sigma is not None:
+    sigma = sigma[valid]
 
 if len(x) == 0:
     st.error("No valid data points found. Check your dataset and uncertainties.")
@@ -229,13 +238,25 @@ if len(x) == 0:
 order = np.argsort(x)
 x = x[order]
 y = y[order]
-sigma = sigma[order]
+
+if sigma is not None:
+    sigma = sigma[order]
 
 if np.ptp(x) == 0:
     st.error("The independent variable must contain more than one distinct value.")
     st.stop()
 
+# True when no uncertainties are available: the noise level is estimated
+noise_free = sigma is None
+
 st.write(f"Number of valid data points: {len(x)}")
+
+if noise_free:
+    st.info(
+        "No uncertainties provided. The fit is unweighted and assumes one constant "
+        "Gaussian noise level for all points, which is estimated from the residuals. "
+        "The MCMC treats this noise level as an extra free parameter."
+    )
 
 # --------------------------------------------------
 # 3. MATHEMATICAL MODELS
@@ -350,13 +371,16 @@ st.subheader("Experimental Dataset")
 
 plt.figure(figsize=(9, 5))
 
-plt.errorbar(
-    x, y,
-    yerr=sigma,
-    fmt="ro",
-    markersize=3,
-    label="Experimental Data"
-)
+if noise_free:
+    plt.plot(x, y, "ro", markersize=3, label="Experimental Data")
+else:
+    plt.errorbar(
+        x, y,
+        yerr=sigma,
+        fmt="ro",
+        markersize=3,
+        label="Experimental Data"
+    )
 
 plt.xlabel(x_col)
 plt.ylabel(y_label)
@@ -374,13 +398,15 @@ st.subheader("Curve Fitting")
 
 try:
 
+    # With sigma: weighted fit, covariance uses the given uncertainties.
+    # Without sigma: unweighted fit, covariance is scaled by the residual variance.
     popt, pcov = curve_fit(
         model,
         x,
         y,
         p0=p0,
         sigma=sigma,
-        absolute_sigma=True,
+        absolute_sigma=not noise_free,
         bounds=(lower_bounds, upper_bounds),
         maxfev=20000
     )
@@ -403,6 +429,20 @@ results = pd.DataFrame({
 
 st.dataframe(results, hide_index=True)
 
+# Estimated noise level when no uncertainties are given
+if noise_free:
+
+    residuals = y - y_fit
+    rss = np.sum(residuals**2)
+    sigma_hat = np.sqrt(rss / (len(y) - ndim))
+
+    if not np.isfinite(sigma_hat) or sigma_hat <= 0:
+        st.error("The residuals are zero, so the noise level cannot be estimated. "
+                 "Provide a sigma column or use replicates.")
+        st.stop()
+
+    st.write(f"Estimated noise level (residual standard deviation) = {sigma_hat:.6g}")
+
 # --------------------------------------------------
 # 6. FITTED CURVE PLOT
 # --------------------------------------------------
@@ -412,13 +452,16 @@ y_plot = model(x_plot, *popt)
 
 plt.figure(figsize=(9, 5))
 
-plt.errorbar(
-    x, y,
-    yerr=sigma,
-    fmt="c+",
-    markersize=4,
-    label="Experimental Data"
-)
+if noise_free:
+    plt.plot(x, y, "c+", markersize=6, label="Experimental Data")
+else:
+    plt.errorbar(
+        x, y,
+        yerr=sigma,
+        fmt="c+",
+        markersize=4,
+        label="Experimental Data"
+    )
 
 plt.plot(
     x_plot,
@@ -437,63 +480,92 @@ st.pyplot(plt.gcf())
 plt.close()
 
 # --------------------------------------------------
-# 7. REDUCED CHI-SQUARE
+# 7. GOODNESS OF FIT
 # --------------------------------------------------
-
-chi_sq = np.sum(((y - y_fit) / sigma)**2)
 
 N = len(y)
 p = ndim
 
-red_chi_sq = chi_sq / (N - p)
-
 st.subheader("Goodness of Fit")
 
-st.write(f"Chi-square = {chi_sq:.5f}")
-st.write(f"Reduced Chi-square = {red_chi_sq:.5f}")
+if noise_free:
+
+    ss_tot = np.sum((y - np.mean(y))**2)
+    r_squared = 1 - rss / ss_tot if ss_tot > 0 else np.nan
+
+    st.write(f"Residual sum of squares = {rss:.6g}")
+    st.write(f"Residual standard deviation = {sigma_hat:.6g}")
+    st.write(f"R² = {r_squared:.5f}")
+    st.caption("Chi-square is not reported because no measurement uncertainties were provided.")
+
+else:
+
+    chi_sq = np.sum(((y - y_fit) / sigma)**2)
+
+    red_chi_sq = chi_sq / (N - p)
+
+    st.write(f"Chi-square = {chi_sq:.5f}")
+    st.write(f"Reduced Chi-square = {red_chi_sq:.5f}")
 
 # --------------------------------------------------
 # 8. MCMC FUNCTIONS
 # --------------------------------------------------
 
-def log_likelihood(theta, x, y, sigma, model):
+def log_likelihood(theta, x, y, sigma, model, noise_free):
+
+    if noise_free:
+        # theta = [model parameters..., ln(noise level)]
+        params = theta[:-1]
+        ln_s = theta[-1]
+        resid = y - model(x, *params)
+        return -0.5 * np.sum((resid / np.exp(ln_s))**2) - len(y) * ln_s
 
     y_model = model(x, *theta)
 
     return -0.5 * np.sum(((y - y_model) / sigma)**2)
 
 
-def log_prior(theta, model_name):
+def log_prior(theta, model_name, noise_free):
 
     if not np.all(np.isfinite(theta)):
         return -np.inf
 
+    params = theta[:-1] if noise_free else theta
+
+    if noise_free and not (-50.0 < theta[-1] < 50.0):
+        return -np.inf
+
     if model_name == "Exponential":
 
-        if theta[1] <= 0:
+        if params[1] <= 0:
             return -np.inf
 
     elif model_name == "Gaussian":
 
-        if theta[2] <= 0:
+        if params[2] <= 0:
             return -np.inf
 
     elif model_name == "Sinusoidal":
 
-        if theta[1] <= 0:
+        if params[1] <= 0:
             return -np.inf
 
     return 0.0
 
 
-def log_posterior(theta, x, y, sigma, model, model_name):
+def log_posterior(theta, x, y, sigma, model, model_name, noise_free):
 
-    lp = log_prior(theta, model_name)
+    lp = log_prior(theta, model_name, noise_free)
 
     if not np.isfinite(lp):
         return -np.inf
 
-    return lp + log_likelihood(theta, x, y, sigma, model)
+    ll = log_likelihood(theta, x, y, sigma, model, noise_free)
+
+    if not np.isfinite(ll):
+        return -np.inf
+
+    return lp + ll
 
 
 # --------------------------------------------------
@@ -502,20 +574,33 @@ def log_posterior(theta, x, y, sigma, model, model_name):
 
 st.subheader("MCMC Sampling")
 
-nwalkers = max(32, 2 * ndim + 2)
+# Full parameter vector: model parameters, plus ln(noise level) if sigma is unknown
+if noise_free:
+    ndim_mcmc = ndim + 1
+    popt_mcmc = np.append(popt, np.log(sigma_hat))
+    # Approximate standard error of ln(sigma): 1 / sqrt(2 (N - p))
+    scale = np.append(
+        np.where(np.isfinite(ecov) & (ecov > 0),
+                 ecov,
+                 np.maximum(np.abs(popt) * 1e-4, 1e-6)),
+        1.0 / np.sqrt(2.0 * (N - p))
+    )
+else:
+    ndim_mcmc = ndim
+    popt_mcmc = popt
+    scale = np.where(
+        np.isfinite(ecov) & (ecov > 0),
+        ecov,
+        np.maximum(np.abs(popt) * 1e-4, 1e-6)
+    )
+
+nwalkers = max(32, 2 * ndim_mcmc + 2)
 nsteps = 5000
 burnin = 1000
 
 rng = np.random.default_rng(42)
 
-# Use covariance uncertainties to initialize walkers
-scale = np.where(
-    np.isfinite(ecov) & (ecov > 0),
-    ecov,
-    np.maximum(np.abs(popt) * 1e-4, 1e-6)
-)
-
-pos = popt + 0.1 * scale * rng.standard_normal((nwalkers, ndim))
+pos = popt_mcmc + 0.1 * scale * rng.standard_normal((nwalkers, ndim_mcmc))
 
 # Ensure all walkers satisfy the prior
 if constrained_index is not None:
@@ -527,8 +612,8 @@ if constrained_index is not None:
         invalid = pos[:, constrained_index] <= 0
 
         pos[invalid] = (
-            popt +
-            0.1 * scale * rng.standard_normal((np.sum(invalid), ndim))
+            popt_mcmc +
+            0.1 * scale * rng.standard_normal((np.sum(invalid), ndim_mcmc))
         )
 
         attempts += 1
@@ -543,9 +628,9 @@ if constrained_index is not None:
 
 sampler = emcee.EnsembleSampler(
     nwalkers,
-    ndim,
+    ndim_mcmc,
     log_posterior,
-    args=(x, y, sigma, model, model_name)
+    args=(x, y, sigma, model, model_name, noise_free)
 )
 
 with st.spinner("Running MCMC sampling..."):
@@ -562,17 +647,30 @@ st.success("MCMC sampling completed.")
 # 11. ANALYZE MCMC SAMPLES
 # --------------------------------------------------
 
-samples = sampler.get_chain(
+samples_raw = sampler.get_chain(
     discard=burnin,
     flat=True
 )
+
+# For display, convert ln(noise level) back to the noise level itself
+samples = samples_raw.copy()
+
+if noise_free:
+    samples[:, -1] = np.exp(samples_raw[:, -1])
+    names_mcmc = parameter_names + ["sigma (noise)"]
+    trace_labels = parameter_names + ["ln(sigma)"]
+    fit_values = np.append(popt, sigma_hat)
+else:
+    names_mcmc = parameter_names
+    trace_labels = parameter_names
+    fit_values = popt
 
 average = np.mean(samples, axis=0)
 uncertainty = np.std(samples, axis=0)
 
 mcmc_results = pd.DataFrame({
-    "Parameter": parameter_names,
-    "Curve Fit": popt,
+    "Parameter": names_mcmc,
+    "Curve Fit": fit_values,
     "MCMC Mean": average,
     "MCMC Uncertainty": uncertainty
 })
@@ -611,23 +709,23 @@ st.subheader("MCMC Trace Plots")
 chain = sampler.get_chain()
 
 fig, axes = plt.subplots(
-    ndim,
+    ndim_mcmc,
     1,
-    figsize=(10, 2.5 * ndim),
+    figsize=(10, 2.5 * ndim_mcmc),
     sharex=True
 )
 
-if ndim == 1:
+if ndim_mcmc == 1:
     axes = [axes]
 
-for i in range(ndim):
+for i in range(ndim_mcmc):
 
     axes[i].plot(
         chain[:, :, i],
         alpha=0.3
     )
 
-    axes[i].set_ylabel(parameter_names[i])
+    axes[i].set_ylabel(trace_labels[i])
 
 axes[-1].set_xlabel("MCMC Step")
 
@@ -642,7 +740,7 @@ plt.close(fig)
 
 st.subheader("Posterior Distributions")
 
-for i, name in enumerate(parameter_names):
+for i, name in enumerate(names_mcmc):
 
     fig, ax = plt.subplots(figsize=(8, 4))
 
@@ -654,7 +752,7 @@ for i, name in enumerate(parameter_names):
     )
 
     ax.axvline(
-        popt[i],
+        fit_values[i],
         color="red",
         linestyle="--",
         label="Curve Fit"
