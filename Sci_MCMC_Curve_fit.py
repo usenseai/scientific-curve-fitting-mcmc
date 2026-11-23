@@ -2,6 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy
 import emcee
+import streamlit as st
+st.title("Scientific Curve Fitting and MCMC")
+st.write("Exponential model: y = A exp(-kt) + C")
 ED=np.loadtxt("ED.csv",delimiter=",", skiprows=1, unpack=True)
 t,y,sigma=ED
 #print(ED)
@@ -14,7 +17,8 @@ plt.axhline(y=0,linewidth=1,color="b")
 plt.axvline(x=0,linewidth=1,color="b")
 plt.grid(True,alpha=0.3)
 plt.legend()
-plt.show()
+st.pyplot(plt.gcf())
+plt.close()
 #Curve Fitting by scipy.optimize.curve_fit
 # Model: y=A*exp(-k*t)+C
 # A is the amplitude, k is the decay constant, and C is the baseline.
@@ -24,15 +28,15 @@ def model(t,A,k,C):
 popt,pcov=scipy.optimize.curve_fit(model,t,y,sigma=sigma, absolute_sigma=True)
 #Fitted values come from popt
 A_f,k_f,C_f=popt
-print(f"A= {A_f}")
-print(f"k= {k_f}")
-print(f"C= {C_f}")
 #gives diagonal elements telling parameters error estimation
 ecov=np.sqrt(np.diag(pcov))
-print(f"The uncertainties in Parameters: {ecov}")
+st.subheader("Curve Fitting Results")
+st.write(f"A = {A_f:.5f}")
+st.write(f"k = {k_f:.5f}")
+st.write(f"C = {C_f:.5f}")
+st.write(f"Parameter uncertainties = {ecov}")
 #values  of y as per fitted parameters of model
 y_f=model(t,A_f,k_f,C_f)
-print()
 #ploting the fitting vs the errorbar
 plt.figure("Fitted Curve", figsize=(10,6)) #Wider and taler fig
 plt.errorbar(t,y,yerr=sigma,fmt="c+", markersize=3, label="Experimental Data")
@@ -43,13 +47,14 @@ plt.axhline(y=0,linewidth=1,color="b")
 plt.axvline(x=0,linewidth=1,color="b")
 plt.grid(True,alpha=0.3)
 plt.legend()
-plt.show()
+st.pyplot(plt.gcf())
+plt.close()
 #Checking the fit is how much correct by reduced chi_sqaure method which has formula first for chi square and then for reduced
 chi_sq=np.sum(((y-y_f)/sigma)**2)
 N=len(y)
 p=3
 red_chi_sq=chi_sq/(N-p)
-print(f"The Reduced Chi Square is {red_chi_sq}")
+st.write(f"Reduced Chi Square = {red_chi_sq:.5f}")
 # Near 1: residuals are reasonably consistent with assumed uncertainties.
 # Much greater than 1: residuals are larger than expected.
 # Much less than 1: uncertainties may be overestimated.
@@ -89,19 +94,23 @@ sampler.run_mcmc(pos,nsteps,progress=True)
 burnin=1000
 samples=sampler.get_chain(discard=burnin, flat=True) # method .get_chain will call in the recorded positions and Flattening to get (samples,3) means no. of samples having parameters 3 a 2D array
 #Analyzing the samples
-average=np.mean(samples, axis=0)
-print(f"Curve Fit A_f= {A_f} : MCMC Fit A_m= {average[0]}")
-print(f"Curve Fit k_f= {k_f} : MCMC Fit k_m= {average[1]}")
-print(f"Curve Fit C_f= {C_f} : MCMC Fit C_m= {average[2]}")
-uncertainty=np.std(samples, axis=0)
-print(f"MCMC uncertainties (A, k, C): {uncertainty}")
+average = np.mean(samples, axis=0)
+uncertainty = np.std(samples, axis=0)
+
+st.subheader("MCMC Results")
+
+st.write(f"Curve Fit A = {A_f:.5f} | MCMC A = {average[0]:.5f}")
+st.write(f"Curve Fit k = {k_f:.5f} | MCMC k = {average[1]:.5f}")
+st.write(f"Curve Fit C = {C_f:.5f} | MCMC C = {average[2]:.5f}")
+
+st.write(f"MCMC uncertainties (A, k, C): {uncertainty}")
 tau=sampler.get_autocorr_time(discard=burnin)
 # Autocorrelation time estimates how many steps are needed for samples
 # to become approximately independent.
-if nsteps-burnin>50*np.max(tau):
-    print("Your Chain length is fine as per 50t rule of thumb")
+if nsteps-burnin > 50*np.max(tau):
+    st.success("Your chain length is fine as per 50τ rule of thumb")
 else:
-    print("Your chain length is short")
+    st.warning("Your chain length is short")
 chain=sampler.get_chain()
 # Plotting A, k, C to inspect chain behaviour and mixing.
 # Trace plots alone cannot prove convergence.
@@ -117,12 +126,9 @@ plt.subplot(3,1,3)
 plt.plot(chain[:,:,2],alpha=0.3)
 plt.ylabel("C")
 plt.tight_layout() # auto adjusting the spaces between plots, labels and axis
-plt.show()
+st.pyplot(plt.gcf())
+plt.close()
 # Plotting posterior histograms to examine the distributions of A, k and C.
-# Expected sample shape after burn-in: (128000, 3).
-print(f"Curve Fit A_f= {A_f} : MCMC Fit A_m= {average[0]}")
-print(f"Curve Fit k_f= {k_f} : MCMC Fit k_m= {average[1]}")
-print(f"Curve Fit C_f= {C_f} : MCMC Fit C_m= {average[2]}")
 
 # Posterior distribution of A, comparing curve-fit and MCMC estimates.
 plt.figure(figsize=(8,8))
@@ -134,7 +140,8 @@ plt.xlabel("A")
 plt.title("Posterior Distribution of A and Comparison of Curve and MCMC Fit")
 plt.legend()
 plt.tight_layout()
-plt.show()
+st.pyplot(plt.gcf())
+plt.close()
 
 # Posterior distribution of k, comparing curve-fit and MCMC estimates.
 plt.figure(figsize=(8,8))
@@ -143,11 +150,11 @@ plt.axvline(k_f, color="r",linestyle="--", label="Curve Fit")
 plt.axvline(average[1], color="b",linestyle="--",label="MCMC Fit")
 plt.ylabel("Probability Density")
 plt.xlabel("k")
-plt.legend()
 plt.title("Posterior Distribution of k and Comparison of Curve and MCMC Fit")
 plt.legend()
 plt.tight_layout()
-plt.show()
+st.pyplot(plt.gcf())
+plt.close()
 
 # Posterior distribution of C, comparing curve-fit and MCMC estimates.
 plt.figure(figsize=(8,8))
@@ -159,4 +166,5 @@ plt.xlabel("C")
 plt.title("Posterior Distribution of C and Comparison of Curve and MCMC Fit")
 plt.legend()
 plt.tight_layout()
-plt.show()
+st.pyplot(plt.gcf())
+plt.close()
